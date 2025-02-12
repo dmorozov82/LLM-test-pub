@@ -114,28 +114,34 @@ class NetBoxProvisioner:
         if device_type_slug and manufacturer_name:
             try:
                 manufacturer_slug = manufacturer_name.lower().replace(' ', '-')
-
-                manufacturer = self._get_manufacturer_with_retry(manufacturer_slug)
+                manufacturer_name = row.get('manufacturer')
+                manufacturer = self.nb.dcim.manufacturers.get(name=manufacturer_name, return_none=True)
                 if not manufacturer:
-                    return None
-
-                # Use ONLY the slug-based retrieval
-                try:
-                    device_type = self.nb.dcim.device_types.get(slug=device_type_slug)
-                    logger.info(f"Device type '{device_type_slug}' already exists.")
+                    # Generate a slug from the manufacturer name
+                    manufacturer_slug = manufacturer_name.lower().replace(' ', '-')
+                    manufacturer = self.nb.dcim.manufacturers.create({
+                        'name': manufacturer_name,
+                        'slug': manufacturer_slug  # Add the slug field
+                    })
+                    logger.info(f"Created manufacturer: {manufacturer_name}")
+                else:
+                    logger.info(f"Successfully retrieved manufacturer '{manufacturer_name}'")
+            except Exception as e:
+                logger.exception(f"Unexpected error creating device type '{device_type_name}': {e}")
+                return None
+            
+            # Use ONLY the slug-based retrieval
+            try:
+                device_type = self.nb.dcim.device_types.get(slug=device_type_slug)
+                logger.info(f"Device type '{device_type_slug}' already exists.")
+                if not device_type:
+                    device_type = self.nb.dcim.device_types.create({
+                            'manufacturer': manufacturer.id,
+                            'model': row.get('device_type'),
+                            'slug': device_type_slug
+                        })
+                    logger.info(f"Created device type: {device_type_slug}, device type object: {device_type}")
                     return device_type
-                except pynetbox.core.query.RequestError as e:
-                    if "Not Found" not in str(e):
-                        logger.error(f"Unexpected error checking for existing device type '{device_type_slug}': {e}")
-                        return None
-
-                device_type = self.nb.dcim.device_types.create({
-                    'manufacturer': manufacturer.id,
-                    'model': row.get('device_type'),
-                    'slug': device_type_slug
-                })
-                logger.info(f"Created device type: {device_type_slug}, device type object: {device_type}")
-                return device_type
             except requests.exceptions.RequestException as e:
                 logger.error(f"Network error creating device type '{device_type_slug}': {e}")
                 return None
@@ -171,7 +177,8 @@ class NetBoxProvisioner:
         device_name = row.get('device_name')
         site_name = row.get('site')
         manufacturer_name = row.get('manufacturer')
-        device_type_name = row.get('device_type')
+        device_type = row.get('device_type')
+        primary_ip = row.get('primary_ip')
 
         logger.info(f"Processing device: {device_name}")
 
@@ -186,29 +193,6 @@ class NetBoxProvisioner:
                 return
         except Exception as e:
             logger.exception(f"Unexpected error getting site '{site_name}': {e}")
-            return
-
-        try:
-            manufacturer = self.nb.dcim.manufacturers.get(name=manufacturer_name, return_none=True)
-            if not manufacturer:
-                manufacturer = self.nb.dcim.manufacturers.create({'name': manufacturer_name})
-                logger.info(f"Created manufacturer: {manufacturer_name}")
-            else:
-                logger.info(f"Successfully retrieved manufacturer '{manufacturer_name}'")
-
-            device_type_slug = device_type_name.lower().replace(' ', '-')
-            device_type = self.nb.dcim.device_types.get(manufacturer=manufacturer.id, model=device_type_name, return_none=True)
-            if not device_type:
-                device_type = self.nb.dcim.device_types.create({
-                    'manufacturer': manufacturer.id,
-                    'model': device_type_name,
-                    'slug': device_type_slug
-                })
-                logger.info(f"Created device type: {device_type_name}")
-            else:
-                logger.info(f"Successfully retrieved device type '{device_type_name}'")
-        except Exception as e:
-            logger.exception(f"Unexpected error getting manufacturer '{site_name}': {e}")
             return
 
         try:
