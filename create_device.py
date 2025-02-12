@@ -108,12 +108,14 @@ class NetBoxProvisioner:
                 logger.exception(f"Unexpected error creating or getting site '{site_name}': {e}")
 
     def create_device_type(self, row):
+        device_type_name = row.get('device_type')
         device_type_slug = row.get('device_type').lower().replace(' ', '-')
         manufacturer_name = row.get('manufacturer')
+        manufacturer_slug = manufacturer_name.lower().replace(' ', '-')
+        device_type = self.nb.dcim.device_types.get(manufacturer=manufacturer_slug, model=device_type_name, return_none=True) # Use manufacturer_slug
 
         if device_type_slug and manufacturer_name:
             try:
-                manufacturer_slug = manufacturer_name.lower().replace(' ', '-')
                 manufacturer_name = row.get('manufacturer')
                 manufacturer = self.nb.dcim.manufacturers.get(name=manufacturer_name, return_none=True)
                 if not manufacturer:
@@ -127,7 +129,7 @@ class NetBoxProvisioner:
                 else:
                     logger.info(f"Successfully retrieved manufacturer '{manufacturer_name}'")
             except Exception as e:
-                logger.exception(f"Unexpected error creating device type '{device_type_name}': {e}")
+                logger.exception(f"Unexpected error creating device type '{device_type_slug}': {e}")
                 return None
             
             # Use ONLY the slug-based retrieval
@@ -177,7 +179,11 @@ class NetBoxProvisioner:
         device_name = row.get('device_name')
         site_name = row.get('site')
         manufacturer_name = row.get('manufacturer')
-        device_type = row.get('device_type')
+        manufacturer_id = self.nb.dcim.manufacturers.get(name=manufacturer_name, return_none=True).id
+        manufacturer_slug = manufacturer_name.lower().replace(' ', '-')
+        device_type_name = row.get('device_type')
+        device_type = self.nb.dcim.device_types.get(manufacturer=manufacturer_slug, model=device_type_name, return_none=True) # Use manufacturer_slug
+
         primary_ip = row.get('primary_ip')
 
         logger.info(f"Processing device: {device_name}")
@@ -231,12 +237,11 @@ class NetBoxProvisioner:
                 # Check if the IP address already exists
                 existing_ip = self.nb.ipam.ip_addresses.get(address=primary_ip, return_none=True)
                 if existing_ip:
-                    logger.warning(f"IP address '{primary_ip}' already exists. Skipping creation.")
-                    return None 
-
-                ip_address = self.nb.ipam.ip_addresses.create(ip_address_data)
-                logger.info(f"Created IP address: {primary_ip}")
-
+                    logger.info(f"IP address '{primary_ip}' already exists. Skipping creation.")
+                else:   
+                    ip_address = self.nb.ipam.ip_addresses.create(ip_address_data)
+                    logger.info(f"Created IP address: {primary_ip}")
+                    return ip_address 
             except Exception as e:
                 logger.error(f"Error creating IP address '{primary_ip}': {e}")
                 return
@@ -252,7 +257,7 @@ class NetBoxProvisioner:
                     'role': row.get('role', 'compute'),
                     'state': row.get('state', 'ready')
                 },
-                ip_field: ip_address.id
+                ip_field: ip_address #.id
             })
             logger.info(f"Created device: {device_name}, device object: {device}")
 
@@ -335,8 +340,8 @@ class NetBoxProvisioner:
             return False
 
 # --- Configuration ---
-NETBOX_URL = "https://netbox.sales-lab.demo.lab.itkey.com"
-NETBOX_TOKEN = "sdadsadasd2312312323123"
+NETBOX_URL = "https://netbox.sdsdemo.lab.itkey.com"
+NETBOX_TOKEN = "9f14197553sdsdsdsd3210929add"
 CSV_FILEPATH = "/home/ubuntu/data.csv"
 
 cert_file = "/installer/data/ca/cert/chain-ca.pem"
