@@ -167,33 +167,54 @@ class NetBoxProvisioner:
                     time.sleep(retry_delay)
                     retry_delay *= 2  # Exponential backoff
 
-
     def create_device(self, row):
         device_name = row.get('device_name')
-        device_type_slug = row.get('device_type').lower().replace(' ', '-')
-        device_type = self.nb.dcim.device_types.get(slug=device_type_slug)
-        manufacturer_name = row.get('manufacturer')
         site_name = row.get('site')
-        primary_ip = row.get('primary_ip')
-        device_role_name = row.get('device_role') # Added for clarity
+        manufacturer_name = row.get('manufacturer')
+        device_type_name = row.get('device_type')
 
         logger.info(f"Processing device: {device_name}")
+
+        try:
+            site = self.nb.dcim.sites.get(name=site_name)
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                logger.error(f"Site '{site_name}' not found. Skipping device '{device_name}'.")
+                return
+            else:
+                logger.exception(f"Error getting site '{site_name}': {e}")
+                return
+        except Exception as e:
+            logger.exception(f"Unexpected error getting site '{site_name}': {e}")
+            return
+
+        try:
+            manufacturer = self.nb.dcim.manufacturers.get(name=manufacturer_name, return_none=True)
+            if not manufacturer:
+                manufacturer = self.nb.dcim.manufacturers.create({'name': manufacturer_name})
+                logger.info(f"Created manufacturer: {manufacturer_name}")
+            else:
+                logger.info(f"Successfully retrieved manufacturer '{manufacturer_name}'")
+
+            device_type_slug = device_type_name.lower().replace(' ', '-')
+            device_type = self.nb.dcim.device_types.get(manufacturer=manufacturer.id, model=device_type_name, return_none=True)
+            if not device_type:
+                device_type = self.nb.dcim.device_types.create({
+                    'manufacturer': manufacturer.id,
+                    'model': device_type_name,
+                    'slug': device_type_slug
+                })
+                logger.info(f"Created device type: {device_type_name}")
+            else:
+                logger.info(f"Successfully retrieved device type '{device_type_name}'")
+        except Exception as e:
+            logger.exception(f"Unexpected error getting manufacturer '{site_name}': {e}")
+            return
 
         try:
             manufacturer = self.get_manufacturer(manufacturer_name)
             if not manufacturer:
                 logger.error(f"Manufacturer '{manufacturer_name}' not found. Skipping device '{device_name}'.")
-                return
-
-            # # Get Device Type using its name, NOT manufacturer ID
-            # device_type = self.get_device_type_by_name(device_type_name) # New function
-            # if not device_type:
-            #     logger.error(f"Device type '{device_type_name}' not found. Skipping device '{device_name}'.")
-            #     return
-
-            site = self.get_site(site_name)
-            if not site:
-                logger.error(f"Site '{site_name}' not found. Skipping device '{device_name}'.")
                 return
 
             device_role = self.get_device_role(row.get('device_role'))
