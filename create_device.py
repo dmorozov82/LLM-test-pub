@@ -167,101 +167,94 @@ class NetBoxProvisioner:
                     time.sleep(retry_delay)
                     retry_delay *= 2  # Exponential backoff
 
+
     def create_device(self, row):
         device_name = row.get('device_name')
         device_type_slug = row.get('device_type').lower().replace(' ', '-')
-        site_name = row.get('site')
-        try:
-            site = self.nb.dcim.sites.get(name=site_name)
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 404:
-                logger.error(f"Site '{site_name}' not found. Skipping device '{device_name}'.")
-                return
-            else:
-                logger.exception(f"Error getting site '{site_name}': {e}")
-                return
-        except Exception as e:
-            logger.exception(f"Unexpected error getting site '{site_name}': {e}")
-            return
-        
+        device_type = self.nb.dcim.device_types.get(slug=device_type_slug)
+        manufacturer_name = row.get('manufacturer')
         site_name = row.get('site')
         primary_ip = row.get('primary_ip')
+        device_role_name = row.get('device_role') # Added for clarity
+
+        logger.info(f"Processing device: {device_name}")
 
         try:
+            manufacturer = self.get_manufacturer(manufacturer_name)
+            if not manufacturer:
+                logger.error(f"Manufacturer '{manufacturer_name}' not found. Skipping device '{device_name}'.")
+                return
+
+            # # Get Device Type using its name, NOT manufacturer ID
+            # device_type = self.get_device_type_by_name(device_type_name) # New function
+            # if not device_type:
+            #     logger.error(f"Device type '{device_type_name}' not found. Skipping device '{device_name}'.")
+            #     return
+
+            site = self.get_site(site_name)
+            if not site:
+                logger.error(f"Site '{site_name}' not found. Skipping device '{device_name}'.")
+                return
+
             device_role = self.get_device_role(row.get('device_role'))
             if not device_role:
                 logger.error(f"Device role '{row.get('device_role')}' not found. Skipping device '{device_name}'.")
                 return
 
+            device = self.nb.dcim.devices.get(name=device_name, return_none=True)
+            if device:
+                logger.info(f"Device '{device_name}' already exists.")
+                return
+        
             if not self.validate_ip(primary_ip):
                 logger.warning(f"Invalid IP address format: {primary_ip}. Skipping device creation.")
                 return
 
+            # Create IP address first
             ip_field = 'primary_ip4' if '.' in primary_ip else 'primary_ip6'
             ip_address_data = {'address': primary_ip, 'status': 'active'}
 
             tenant_name = row.get('tenant')
             if tenant_name:
-                try:
-                    tenant = self.nb.tenancy.tenants.get(name=tenant_name)
+                tenant = self.nb.tenancy.tenants.get(name=tenant_name, return_none=True)
+                if tenant:
                     ip_address_data['tenant'] = tenant.id
-                except requests.exceptions.HTTPError as e:
-                    if e.response.status_code == 404:
-                        logger.warning(f"Tenant '{tenant_name}' not found. Skipping tenant assignment for IP address '{primary_ip}'.")
-                    else:
-                        logger.exception(f"Error getting tenant '{tenant_name}': {e}")
-                        return
-                except Exception as e:
-                    logger.exception(f"Unexpected error getting tenant '{tenant_name}': {e}")
-                    return
-
-            # Check for existing IP before creating it
-            existing_ip = self.nb.ipam.ip_addresses.get(address=primary_ip, return_none=True)
-            if existing_ip:
-                logger.info(f"IP address '{primary_ip}' already exists. Proceeding with device creation.")
-                ip_address = existing_ip #Use existing IP object
-            else:
-                try:
-                    ip_address = self.nb.ipam.ip_addresses.create(ip_address_data)
-                    logger.info(f"Created IP address: {primary_ip}")
-                except requests.exceptions.HTTPError as e:
-                    if e.response.status_code == 400:
-                        logger.error(f"Error creating IP address '{primary_ip}': {e.response.json()}")
-                    else:
-                        logger.exception(f"Network error creating IP address '{primary_ip}': {e}")
-                    return
-                except Exception as e:
-                    logger.exception(f"Unexpected error creating IP address '{primary_ip}': {e}")
-                    return
+                else:
+                    logger.warning(f"Tenant '{tenant_name}' not found. Skipping tenant assignment for IP address '{primary_ip}'.")
 
             try:
-                site = self.nb.dcim.sites.get(name=site_name)
-                device_type_slug = row.get('device_type').lower().replace(' ', '-') 
-                device_type = self.nb.dcim.device_types.get(slug=device_type_slug)
-                device_type_id = device_type.id
-                device = self.nb.dcim.devices.create({
-                    'name': device_name,
-                    'device_type': device_type_id,
-                    'site': site.id,
-                    'status': row.get('status', 'active'),
-                    'device_role': 1,           #################################################
-                    'custom_fields': {
-                        'role': row.get('role', 'compute'),
-                        'state': row.get('state', 'ready')
-                    },
-                    ip_field: ip_address.id  # Use the IP address ID (existing or newly created)
-                })
-                logger.info(f"Created device: {device_name}, device object: {device}")
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Network error creating device '{device_name}': {e}")
+                # Check if the IP address already exists
+                existing_ip = self.nb.ipam.ip_addresses.get(address=primary_ip, return_none=True)
+                if existing_ip:
+                    logger.warning(f"IP address '{primary_ip}' already exists. Skipping creation.")
+                    return None 
+
+                ip_address = self.nb.ipam.ip_addresses.create(ip_address_data)
+                logger.info(f"Created IP address: {primary_ip}")
+
             except Exception as e:
-                logger.exception(f"Unexpected error creating device '{device_name}': {e}")
+                logger.error(f"Error creating IP address '{primary_ip}': {e}")
+                return
+            
+            # Create device with custom field and IP address
+            device = self.nb.dcim.devices.create({
+                'name': device_name,
+                'device_type': device_type.id,
+                'site': site.id,
+                'status': row.get('status', 'active'),
+                'device_role': device_role.id,
+                'custom_fields': {
+                    'role': row.get('role', 'compute'),
+                    'state': row.get('state', 'ready')
+                },
+                ip_field: ip_address.id
+            })
+            logger.info(f"Created device: {device_name}, device object: {device}")
 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Network error during device creation for '{device_name}': {e}")
+            logger.error(f"Network error creating device '{device_name}': {e}")
         except Exception as e:
-            logger.exception(f"Unexpected error during device creation for '{device_name}': {e}")
-
+            logger.exception(f"Unexpected error creating device '{device_name}': {e}")
 
     ### Helper functions for better readability and error handling
 
@@ -337,8 +330,8 @@ class NetBoxProvisioner:
             return False
 
 # --- Configuration ---
-NETBOX_URL = "https://demo.lab.com"
-NETBOX_TOKEN = "45654656"
+NETBOX_URL = "https://netbox.sales-lab.demo.lab.itkey.com"
+NETBOX_TOKEN = "9f1419755317d1c1cf151890505bbd3210929add"
 CSV_FILEPATH = "/home/ubuntu/data.csv"
 
 cert_file = "/installer/data/ca/cert/chain-ca.pem"
