@@ -389,8 +389,8 @@ class NetBoxProvisioner:
             return False
 
 # --- Configuration ---
-NETBOX_URL = "https://netbox.sales-lab.demo.lab.itkey.com"
-NETBOX_TOKEN = "9f1419755317d1c1cf151890505bbd3210929add"
+NETBOX_URL = "https://netbox.saleslab.com"
+NETBOX_TOKEN = "9f1419755317bbd3210929add"
 CSV_FILEPATH = "/home/ubuntu/data.csv"
 
 cert_file = "/installer/data/ca/cert/chain-ca.pem"
