@@ -1,6 +1,6 @@
 import csv
 import logging
-import pynetbox
+import pynetbox # type: ignore
 import requests
 import sys
 import time 
@@ -18,12 +18,6 @@ requests.packages.urllib3.disable_warnings()  # Suppress SSL warnings
 class NetBoxProvisioner:
     def __init__(self, nb_url, nb_token, csv_filepath, cert_path=None):
         logger.info(f"Initializing NetBoxProvisioner with URL: {nb_url}, CSV: {csv_filepath}, cert_path: {cert_path}")
-        data_rows = [
-            {'device_name': 'Device1', 'site': 'SiteA', 'manufacturer': 'ManufacturerX', 'device_type': 'ModelY', 'role': 'compute', 'state': 'ready'},
-            {'device_name': 'Device2', 'site': 'SiteB', 'manufacturer': 'ManufacturerZ', 'device_type': 'ModelW', 'role': 'controller', 'state': 'production'},
-         ]
-        importer.import_devices(data_rows)
-
         try:
             logger.info("Attempting to connect to NetBox...")
             self.nb = pynetbox.api(url=nb_url, token=nb_token)
@@ -258,16 +252,16 @@ class NetBoxProvisioner:
             # state_choice_id = self.get_custom_field_choice_id('state', row.get('state', 'ready'))
 
             # Create device with custom field and IP address
-            custom_fields = self.get_custom_field_data(row)
-
             device_data = {
                 'name': device_name,
                 'device_type': device_type.id,
                 'site': site.id,
                 'status': 'active',
-                'role': 17,  # Temporary hardcoded role - REPLACE WITH PROPER ROLE DETERMINATION
-                'custom_fields': custom_fields,
+                'role': 17, # Temproraly hardcoded until we fix everfucking funtion - self.get_device_role(row.get('device_role')),
+                'custom_fields': {'role': 'compute', 'state': 'ready'},
             }
+
+            logger.info(f"Attempting to create device '{device_name}' with data: {device_data}")
 
             try:
                 device = self.nb.dcim.devices.create(device_data)
@@ -286,49 +280,21 @@ class NetBoxProvisioner:
 
     ### Helper functions for better readability and error handling
 
-    # Helper function to use Direct API calls to retrieve custom field choices for role and state
-    def import_devices(self, data_rows):
-        for row in data_rows:
-            self.create_device(row)
-
-    def get_custom_field_data(self, row):
+    # Helper function to extract custom field choice id from choice set
+    def get_custom_field_choice_id(self, choice_set_name, choice_value):
         try:
-            url = f"{NETBOX_URL}/api/extras/custom-fields/"
-            headers = {'Authorization': f'Token {NETBOX_TOKEN}', 'Accept': 'application/json'}
-            response = requests.get(url, headers=headers, verify=False)  # verify=False - INSECURE - ONLY FOR TESTING
-            response.raise_for_status()
-            custom_fields_data = response.json()['results']
-
-            custom_field_map = {cf['name']: cf for cf in custom_fields_data}
-
-            custom_fields = {}
-            for field_name, field_value in row.items():
-                if field_name in custom_field_map:
-                    custom_field = custom_field_map[field_name]
-                    choice_set_id = custom_field['choice_set'].get('id')
-
-                    if custom_field['type']['value'] in ('select', 'multiselect') and choice_set_id:
-                        choice_set_url = custom_field['choice_set']['url']
-                        choice_set_response = requests.get(choice_set_url, headers=headers, verify=False)  # verify=False - INSECURE - ONLY FOR TESTING
-                        choice_set_response.raise_for_status()
-                        choice_set_data = choice_set_response.json()
-
-                        for choice in choice_set_data['extra_choices']:
-                            if choice[1] == field_value:
-                                custom_fields[field_name] = choice[1]
-                                break
-                        else:
-                            logger.warning(f"Choice '{field_value}' not found for field '{field_name}'.")
-                    else:
-                        custom_fields[field_name] = field_value
-
-            return custom_fields
-
-        except requests.exceptions.RequestException as e:
-            logger.exception(f"Error fetching custom field data: {e}")
-            return None
-        except (KeyError, IndexError) as e:
-            logger.exception(f"Error parsing API response: {e}")
+            custom_field = self.nb.extras.custom_field_choices.get(name=choice_set_name)
+            if custom_field:
+                for choice in custom_field.choices.all():
+                    if choice.value == choice_value:
+                        return choice.id
+                logger.error(f"Custom field choice '{choice_value}' not found in choice set '{choice_set_name}'.")
+                return None
+            else:
+                logger.error(f"Custom field '{choice_set_name}' not found.")
+                return None
+        except Exception as e:
+            logger.exception(f"Error fetching custom field choice '{choice_value}' from choice set '{choice_set_name}': {e}")
             return None
         
     # Helper function to retrieve device type by name
@@ -423,8 +389,8 @@ class NetBoxProvisioner:
             return False
 
 # --- Configuration ---
-NETBOX_URL = "https://netbox.lab.com"
-NETBOX_TOKEN = "9f1419755dfsdfsdf10929add"
+NETBOX_URL = "https://netbox.sales-lab.demo.lab.itkey.com"
+NETBOX_TOKEN = "9f1419755317d1c1cf151890505bbd3210929add"
 CSV_FILEPATH = "/home/ubuntu/data.csv"
 
 cert_file = "/installer/data/ca/cert/chain-ca.pem"
