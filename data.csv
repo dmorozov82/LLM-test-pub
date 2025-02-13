@@ -1,0 +1,3 @@
+site,tenant,device_name,device_type,manufacturer,device_role,primary_ip,interface_name,vlan_name,vlan_vid,state,role,config_context
+SiteA,TenantA,Server1,Server,ManufacturerA,Server,192.168.1.10,eth0,VLAN10,10,ready,controller,context-server1
+SiteB,TenantB,Server2,Server,ManufacturerB,Server,10.0.0.10,eth0,VLAN20,20,ready,compute,context-server2
